@@ -11,6 +11,8 @@ import { downloadVideo, ensureYtDlp } from './services/downloader.js';
 import { createClip, getVideoMetadata } from './services/videoProcessor.js';
 import { getTranscript } from './services/transcript.js';
 import { analyzeTranscript } from './services/ai.js';
+import { extractCandidateFrames, renderThumbnail, cleanupFrames } from './services/thumbnailGenerator.js';
+import { getAuthUrl, getTokensFromCode, uploadVideoToYoutube } from './services/youtubePublisher.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -27,9 +29,14 @@ const CLIPS_DIR = path.join(__dirname, 'clips');
 const DOWNLOADS_DIR = path.join(__dirname, 'downloads');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
+const THUMBNAILS_DIR = path.join(__dirname, 'thumbnails');
+const THUMB_FRAMES_DIR = path.join(THUMBNAILS_DIR, 'frames');
+
 app.use('/clips', express.static(CLIPS_DIR));
 app.use('/downloads', express.static(DOWNLOADS_DIR));
 app.use('/public', express.static(PUBLIC_DIR));
+app.use('/thumbnails', express.static(THUMBNAILS_DIR));
+app.use('/thumbnails/frames', express.static(THUMB_FRAMES_DIR));
 
 // Ensure system directories exist
 if (!fs.existsSync(CLIPS_DIR)) fs.mkdirSync(CLIPS_DIR, { recursive: true });
@@ -421,6 +428,199 @@ app.get('/api/settings/download-status', (req, res) => {
   const job = activeJobs.get(jobKey) || { status: 'idle', progress: 0 };
   res.json(job);
 });
+
+// -------------------------------------------------------------
+// THUMBNAIL GENERATION ENDPOINTS
+// -------------------------------------------------------------
+
+// Extract candidate frames from a completed clip
+app.post('/api/clips/:id/extract-frames', async (req, res) => {
+  const clip = db.getClipById(req.params.id);
+  if (!clip) return res.status(404).json({ error: 'Clip not found' });
+  if (clip.status !== 'completed') return res.status(400).json({ error: 'Clip must be completed before extracting frames.' });
+  if (!clip.filePath || !fs.existsSync(clip.filePath)) return res.status(400).json({ error: 'Clip video file not found on disk.' });
+
+  try {
+    const campaign = db.getCampaignById(clip.campaignId);
+    const originalVideoName = campaign ? `campaign_${campaign.id}.mp4` : '';
+    const originalVideoPath = originalVideoName ? path.join(DOWNLOADS_DIR, originalVideoName) : '';
+
+    let sourceVideoPath = clip.filePath;
+    let startTime = 0;
+    let duration = null;
+
+    if (originalVideoPath && fs.existsSync(originalVideoPath)) {
+      console.log(`[Thumbnail] Extracting from clean original video: ${originalVideoPath} at start=${clip.startTime}s, duration=${clip.duration}s`);
+      sourceVideoPath = originalVideoPath;
+      startTime = parseFloat(clip.startTime) || 0;
+      duration = parseFloat(clip.duration) || null;
+    } else {
+      console.log(`[Thumbnail] Original video not found. Extracting from clip instead: ${clip.filePath}`);
+    }
+
+    const framePaths = await extractCandidateFrames(sourceVideoPath, clip.id, startTime, duration);
+    // Convert absolute paths to relative URLs for the frontend
+    const frameUrls = framePaths.map(fp => {
+      const fileName = path.basename(fp);
+      return `/thumbnails/frames/${fileName}`;
+    });
+    db.updateClip(clip.id, { thumbnailFrames: frameUrls });
+    res.json({ frames: frameUrls });
+  } catch (err) {
+    console.error('[Thumbnail] Frame extraction error:', err);
+    res.status(500).json({ error: `Frame extraction failed: ${err.message}` });
+  }
+});
+
+// Generate the final thumbnail from a selected frame
+app.post('/api/clips/:id/generate-thumbnail', async (req, res) => {
+  const { frameIndex, titleText } = req.body;
+  const clip = db.getClipById(req.params.id);
+  if (!clip) return res.status(404).json({ error: 'Clip not found' });
+  if (!clip.thumbnailFrames || clip.thumbnailFrames.length === 0) {
+    return res.status(400).json({ error: 'No frames extracted yet. Please extract frames first.' });
+  }
+  if (frameIndex < 0 || frameIndex >= clip.thumbnailFrames.length) {
+    return res.status(400).json({ error: 'Invalid frame index.' });
+  }
+
+  try {
+    // Resolve the frame URL back to an absolute file path
+    const frameUrl = clip.thumbnailFrames[frameIndex];
+    const frameFileName = path.basename(frameUrl);
+    const framePath = path.join(THUMB_FRAMES_DIR, frameFileName);
+
+    if (!fs.existsSync(framePath)) {
+      return res.status(400).json({ error: 'Selected frame file not found. Re-extract frames.' });
+    }
+
+    const thumbnailPath = await renderThumbnail({
+      framePath,
+      titleText: titleText || clip.title || 'Untitled',
+      clipId: clip.id
+    });
+
+    const thumbnailUrl = `/thumbnails/${path.basename(thumbnailPath)}`;
+    db.updateClip(clip.id, { thumbnailPath: thumbnailUrl });
+
+    // Cleanup extracted frames after successful render
+    cleanupFrames(clip.id);
+    db.updateClip(clip.id, { thumbnailFrames: [] });
+
+    res.json({ thumbnailUrl });
+  } catch (err) {
+    console.error('[Thumbnail] Render error:', err);
+    res.status(500).json({ error: `Thumbnail rendering failed: ${err.message}` });
+  }
+});
+
+// -------------------------------------------------------------
+// YOUTUBE PUBLISHING ENDPOINTS
+// -------------------------------------------------------------
+
+// Redirect to Google Consent Screen
+app.get('/api/auth/youtube', (req, res) => {
+  try {
+    const authUrl = getAuthUrl();
+    res.redirect(authUrl);
+  } catch (err) {
+    console.error('[YouTube Auth] Failed to generate auth URL:', err);
+    res.status(500).send(`Authentication setup failed: ${err.message}`);
+  }
+});
+
+// OAuth Callback handler
+app.get('/api/auth/youtube/callback', async (req, res) => {
+  const { code } = req.query;
+  if (!code) {
+    return res.status(400).send('Authorization code is missing.');
+  }
+
+  try {
+    const tokens = await getTokensFromCode(code);
+    db.updateSettings({ youtubeTokens: tokens });
+    console.log('[YouTube Auth] Channel connected and tokens saved.');
+    res.redirect('http://localhost:5173/?tab=scheduler&auth=success');
+  } catch (err) {
+    console.error('[YouTube Auth] Error exchanging code for tokens:', err);
+    res.status(500).send(`OAuth callback failed: ${err.message}`);
+  }
+});
+
+// Check YouTube Auth status
+app.get('/api/youtube/status', (req, res) => {
+  const settings = db.getSettings();
+  const connected = !!(settings.youtubeTokens && settings.youtubeTokens.refresh_token);
+  res.json({ connected });
+});
+
+// Disconnect YouTube Channel
+app.post('/api/youtube/disconnect', (req, res) => {
+  db.updateSettings({ youtubeTokens: null });
+  res.json({ success: true });
+});
+
+// Upload Video + Thumbnail as Private Draft to YouTube
+app.post('/api/clips/:id/upload-youtube', async (req, res) => {
+  const clip = db.getClipById(req.params.id);
+  if (!clip) return res.status(404).json({ error: 'Clip not found' });
+  if (clip.status !== 'completed') return res.status(400).json({ error: 'Clip video file is not ready yet.' });
+
+  const settings = db.getSettings();
+  if (!settings.youtubeTokens) {
+    return res.status(401).json({ error: 'YouTube channel is not connected. Please authenticate first.' });
+  }
+
+  // Check if video file exists
+  if (!clip.filePath || !fs.existsSync(clip.filePath)) {
+    return res.status(400).json({ error: 'Clip video file not found on disk.' });
+  }
+
+  // Resolve custom thumbnail path if ready
+  let thumbnailPath = '';
+  if (clip.thumbnailPath) {
+    thumbnailPath = path.join(THUMBNAILS_DIR, path.basename(clip.thumbnailPath));
+    if (!fs.existsSync(thumbnailPath)) {
+      thumbnailPath = ''; // fallback to no custom thumbnail if file missing
+    }
+  }
+
+  // Update status in DB to uploading
+  db.updateClip(clip.id, {
+    youtubeUploadStatus: 'uploading',
+    youtubeUploadError: null
+  });
+
+  // Run upload asynchronously in background
+  (async () => {
+    try {
+      const videoId = await uploadVideoToYoutube({
+        videoPath: clip.filePath,
+        title: clip.title || 'Untitled Clip',
+        description: `${clip.title || ''}\n\n${clip.tags || ''}`,
+        thumbnailPath,
+        tokens: settings.youtubeTokens
+      });
+
+      db.updateClip(clip.id, {
+        youtubeVideoId: videoId,
+        youtubeUploadStatus: 'success',
+        youtubeUploadError: null
+      });
+    } catch (err) {
+      console.error(`[YouTube Upload] Failed for clip ${clip.id}:`, err);
+      db.updateClip(clip.id, {
+        youtubeUploadStatus: 'failed',
+        youtubeUploadError: err.message
+      });
+    }
+  })();
+
+  res.status(202).json({ message: 'YouTube upload started in background' });
+});
+
+
+
 
 // Init trigger on startup to make sure yt-dlp is available
 ensureYtDlp().then(() => {

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import type { Campaign, Clip, Settings } from '../types';
-import { Play, Copy, Check, Download, Info, Video, HelpCircle, Loader2, Sparkles, TrendingUp, Link } from 'lucide-react';
+import { Play, Copy, Check, Download, Info, Video, HelpCircle, Loader2, Sparkles, TrendingUp, Link, Image, ImagePlus } from 'lucide-react';
 import axios from 'axios';
 
 interface GeneratorProps {
@@ -48,6 +48,14 @@ export default function Generator({
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [renderingInsightId, setRenderingInsightId] = useState<string | null>(null);
   const [copiedInsightId, setCopiedInsightId] = useState<string | null>(null);
+
+  // Thumbnail States
+  const [extractingFramesClipId, setExtractingFramesClipId] = useState<string | null>(null);
+  const [thumbnailFrames, setThumbnailFrames] = useState<{ [clipId: string]: string[] }>({});
+  const [selectedFrameIndex, setSelectedFrameIndex] = useState<{ [clipId: string]: number }>({});
+  const [thumbnailTitle, setThumbnailTitle] = useState<{ [clipId: string]: string }>({});
+  const [renderingThumbnailClipId, setRenderingThumbnailClipId] = useState<string | null>(null);
+  const [thumbnailShowSection, setThumbnailShowSection] = useState<{ [clipId: string]: boolean }>({});
 
   const handleAnalyzeTranscript = async () => {
     if (isAnalyzing) return;
@@ -256,6 +264,69 @@ export default function Generator({
     } catch (err) {
       console.error(err);
     }
+  };
+
+  // Thumbnail Handlers
+  const handleExtractFrames = async (clipId: string, clipTitle: string) => {
+    try {
+      setExtractingFramesClipId(clipId);
+      setThumbnailShowSection(prev => ({ ...prev, [clipId]: true }));
+      const res = await axios.post(`/api/clips/${clipId}/extract-frames`);
+      setThumbnailFrames(prev => ({ ...prev, [clipId]: res.data.frames }));
+      setSelectedFrameIndex(prev => ({ ...prev, [clipId]: 2 })); // Default to middle frame
+      setThumbnailTitle(prev => ({ ...prev, [clipId]: clipTitle || '' }));
+    } catch (err: any) {
+      console.error(err);
+      alert(err.response?.data?.error || 'Failed to extract frames.');
+    } finally {
+      setExtractingFramesClipId(null);
+    }
+  };
+
+  const handleRenderThumbnail = async (clipId: string) => {
+    const frameIdx = selectedFrameIndex[clipId] ?? 0;
+    const titleText = thumbnailTitle[clipId] || '';
+    try {
+      setRenderingThumbnailClipId(clipId);
+      await axios.post(`/api/clips/${clipId}/generate-thumbnail`, {
+        frameIndex: frameIdx,
+        titleText
+      });
+      setThumbnailShowSection(prev => ({ ...prev, [clipId]: false }));
+      setThumbnailFrames(prev => ({ ...prev, [clipId]: [] }));
+      onRefreshClips();
+    } catch (err: any) {
+      console.error(err);
+      alert(err.response?.data?.error || 'Failed to render thumbnail.');
+    } finally {
+      setRenderingThumbnailClipId(null);
+    }
+  };
+
+  const getLivePreviewLines = (titleText: string) => {
+    const words = titleText.trim().split(/\s+/).filter(w => w.length > 0);
+    const lines: Array<{ text: string; highlight: boolean; badge: boolean }> = [];
+
+    if (words.length === 0) return [];
+
+    if (words.length <= 2) {
+      lines.push({ text: words.join(' '), highlight: true, badge: false });
+    } else if (words.length <= 4) {
+      const mid = Math.ceil(words.length / 2);
+      lines.push({ text: words.slice(0, mid).join(' '), highlight: false, badge: false });
+      lines.push({ text: words.slice(mid).join(' '), highlight: true, badge: false });
+    } else {
+      const chunkSize = Math.ceil(words.length / 3);
+      const line1 = words.slice(0, Math.min(3, chunkSize));
+      const line2 = words.slice(line1.length, line1.length + chunkSize);
+      const line3 = words.slice(line1.length + line2.length);
+
+      if (line1.length > 0) lines.push({ text: line1.join(' '), highlight: false, badge: true });
+      if (line2.length > 0) lines.push({ text: line2.join(' '), highlight: false, badge: false });
+      if (line3.length > 0) lines.push({ text: line3.join(' '), highlight: true, badge: false });
+    }
+
+    return lines;
   };
 
   const isCoDCampaign = campaign.name.toLowerCase().includes('call of duty') || campaign.name.toLowerCase().includes('cod');
@@ -1049,6 +1120,269 @@ export default function Generator({
                       </button>
                     </div>
                   </div>
+
+                  {/* Thumbnail Generator Section */}
+                  {clip.status === 'completed' && (
+                    <div style={{ marginTop: '16px', borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
+                      {/* Thumbnail Actions Row */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                        {!thumbnailShowSection[clip.id] && !clip.thumbnailPath && (
+                          <button
+                            className="btn btn-secondary"
+                            style={{ padding: '8px 16px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}
+                            onClick={() => handleExtractFrames(clip.id, clip.title)}
+                            disabled={extractingFramesClipId === clip.id}
+                          >
+                            {extractingFramesClipId === clip.id ? (
+                              <><Loader2 size={14} className="animate-spin" /> Extracting Frames...</>
+                            ) : (
+                              <><ImagePlus size={14} /> Generate Thumbnail</>
+                            )}
+                          </button>
+                        )}
+
+                        {clip.thumbnailPath && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span className="badge badge-secondary" style={{ fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              <Image size={12} /> Thumbnail Ready
+                            </span>
+                            <a
+                              href={clip.thumbnailPath}
+                              download
+                              className="btn btn-primary"
+                              style={{ padding: '6px 14px', fontSize: '11px', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px' }}
+                            >
+                              <Download size={12} /> Download Thumbnail
+                            </a>
+                            <button
+                              className="btn btn-secondary"
+                              style={{ padding: '6px 14px', fontSize: '11px' }}
+                              onClick={() => handleExtractFrames(clip.id, clip.title)}
+                              disabled={extractingFramesClipId === clip.id}
+                            >
+                              {extractingFramesClipId === clip.id ? 'Extracting...' : 'Re-generate'}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Thumbnail Preview */}
+                      {clip.thumbnailPath && !thumbnailShowSection[clip.id] && (
+                        <div style={{ marginTop: '12px', display: 'flex', justifyContent: 'center' }}>
+                          <img
+                            src={clip.thumbnailPath}
+                            alt="Thumbnail Preview"
+                            style={{
+                              width: '180px',
+                              height: '320px',
+                              objectFit: 'cover',
+                              borderRadius: '12px',
+                              border: '2px solid var(--border)',
+                              boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)'
+                            }}
+                          />
+                        </div>
+                      )}
+
+                      {/* Frame Picker UI */}
+                      {thumbnailShowSection[clip.id] && (thumbnailFrames[clip.id]?.length > 0) && (
+                        <div style={{
+                          marginTop: '16px',
+                          background: 'rgba(255, 255, 255, 0.02)',
+                          border: '1px solid var(--border)',
+                          borderRadius: '12px',
+                          padding: '20px'
+                        }}>
+                          <h4 style={{ fontSize: '14px', fontWeight: '700', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <Image size={16} style={{ color: 'var(--primary)' }} />
+                            Select Best Frame
+                          </h4>
+                          <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '16px' }}>
+                            Pick the frame with the best facial expression or pose for the thumbnail.
+                          </p>
+
+                          {/* Frame Grid */}
+                          <div style={{
+                            display: 'grid',
+                            gridTemplateColumns: 'repeat(5, 1fr)',
+                            gap: '8px',
+                            marginBottom: '20px'
+                          }}>
+                            {thumbnailFrames[clip.id].map((frameUrl, idx) => (
+                              <div
+                                key={idx}
+                                onClick={() => setSelectedFrameIndex(prev => ({ ...prev, [clip.id]: idx }))}
+                                style={{
+                                  cursor: 'pointer',
+                                  borderRadius: '8px',
+                                  overflow: 'hidden',
+                                  border: selectedFrameIndex[clip.id] === idx
+                                    ? '3px solid var(--primary)'
+                                    : '3px solid transparent',
+                                  boxShadow: selectedFrameIndex[clip.id] === idx
+                                    ? '0 0 12px rgba(99, 102, 241, 0.4)'
+                                    : 'none',
+                                  transition: 'all 0.2s',
+                                  position: 'relative'
+                                }}
+                              >
+                                <img
+                                  src={frameUrl}
+                                  alt={`Frame ${idx + 1}`}
+                                  style={{ width: '100%', height: '80px', objectFit: 'cover', display: 'block' }}
+                                />
+                                {selectedFrameIndex[clip.id] === idx && (
+                                  <div style={{
+                                    position: 'absolute',
+                                    top: '4px', right: '4px',
+                                    background: 'var(--primary)',
+                                    borderRadius: '50%',
+                                    width: '20px', height: '20px',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center'
+                                  }}>
+                                    <Check size={12} color="white" />
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+
+                          {/* Title Input */}
+                          <div style={{ marginBottom: '16px' }}>
+                            <label style={{ fontSize: '12px', fontWeight: '600', marginBottom: '6px', display: 'block', color: 'var(--text-muted)' }}>
+                              Thumbnail Title Text
+                            </label>
+                            <input
+                              type="text"
+                              placeholder="Enter title for thumbnail..."
+                              value={thumbnailTitle[clip.id] || ''}
+                              onChange={e => setThumbnailTitle(prev => ({ ...prev, [clip.id]: e.target.value }))}
+                              style={{ width: '100%' }}
+                            />
+                          </div>
+
+                          {/* Live Preview Box */}
+                          <div style={{ marginBottom: '20px' }}>
+                            <label style={{ fontSize: '12px', fontWeight: '600', marginBottom: '8px', display: 'block', color: 'var(--text-muted)' }}>
+                              Live Preview (Realtime)
+                            </label>
+                            <div style={{ display: 'flex', justifyContent: 'center' }}>
+                              <div style={{
+                                width: '180px',
+                                height: '320px',
+                                position: 'relative',
+                                overflow: 'hidden',
+                                borderRadius: '12px',
+                                border: '2px solid var(--border)',
+                                boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+                                background: '#111'
+                              }}>
+                                {/* Background Image */}
+                                {thumbnailFrames[clip.id]?.[selectedFrameIndex[clip.id] ?? 2] && (
+                                  <img
+                                    src={thumbnailFrames[clip.id][selectedFrameIndex[clip.id] ?? 2]}
+                                    alt="Live Preview Background"
+                                    style={{
+                                      width: '100%',
+                                      height: '100%',
+                                      objectFit: 'cover',
+                                      position: 'absolute',
+                                      top: 0,
+                                      left: 0,
+                                      zIndex: 1
+                                    }}
+                                  />
+                                )}
+                                {/* Dark Gradient Overlay */}
+                                <div style={{
+                                  position: 'absolute',
+                                  top: 0, left: 0, width: '100%', height: '100%',
+                                  background: 'linear-gradient(180deg, rgba(0,0,0,0.6) 0%, rgba(0,0,0,0.2) 30%, rgba(0,0,0,0.2) 75%, rgba(0,0,0,0.7) 100%)',
+                                  zIndex: 2
+                                }} />
+                                {/* Title Container */}
+                                <div style={{
+                                  position: 'absolute',
+                                  top: '15px',
+                                  left: '10px',
+                                  right: '10px',
+                                  zIndex: 3,
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  gap: '2px'
+                                }}>
+                                  {getLivePreviewLines(thumbnailTitle[clip.id] || '').map((line, idx) => {
+                                    if (line.badge) {
+                                      return (
+                                        <div key={idx} style={{
+                                          alignSelf: 'flex-start',
+                                          background: 'linear-gradient(135deg, #FFD700, #FFA500)',
+                                          color: '#000000',
+                                          padding: '2px 6px',
+                                          borderRadius: '4px',
+                                          fontFamily: "'Montserrat', sans-serif",
+                                          fontSize: '8px',
+                                          fontWeight: 900,
+                                          textTransform: 'uppercase',
+                                          letterSpacing: '0.5px',
+                                          boxShadow: '0 2px 6px rgba(255, 165, 0, 0.3)',
+                                          marginBottom: '2px'
+                                        }}>
+                                          {line.text}
+                                        </div>
+                                      );
+                                    } else {
+                                      return (
+                                        <div key={idx} style={{
+                                          fontFamily: "'Anton', 'Impact', sans-serif",
+                                          fontSize: '18px',
+                                          textTransform: 'uppercase',
+                                          lineHeight: 0.95,
+                                          letterSpacing: '0.5px',
+                                          color: line.highlight ? '#FFD700' : '#FFFFFF',
+                                          WebkitTextStroke: '1px #000000',
+                                          textShadow: '0 1px 3px rgba(0,0,0,0.8)'
+                                        }}>
+                                          {line.text}
+                                        </div>
+                                      );
+                                    }
+                                  })}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Render Button */}
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <button
+                              className="btn btn-primary"
+                              style={{ padding: '10px 20px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}
+                              onClick={() => handleRenderThumbnail(clip.id)}
+                              disabled={renderingThumbnailClipId === clip.id}
+                            >
+                              {renderingThumbnailClipId === clip.id ? (
+                                <><Loader2 size={14} className="animate-spin" /> Rendering Thumbnail...</>
+                              ) : (
+                                <><Sparkles size={14} /> Render Thumbnail</>
+                              )}
+                            </button>
+                            <button
+                              className="btn btn-secondary"
+                              style={{ padding: '10px 16px', fontSize: '13px' }}
+                              onClick={() => {
+                                setThumbnailShowSection(prev => ({ ...prev, [clip.id]: false }));
+                                setThumbnailFrames(prev => ({ ...prev, [clip.id]: [] }));
+                              }}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                 </div>
 
                 {/* Progress bar for background processing */}

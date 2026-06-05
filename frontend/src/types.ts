@@ -41,6 +41,11 @@ export interface Clip {
   views: number;
   earnings: number;
   error?: string;
+  thumbnailFrames?: string[];
+  thumbnailPath?: string;
+  youtubeVideoId?: string;
+  youtubeUploadStatus?: 'idle' | 'uploading' | 'success' | 'failed';
+  youtubeUploadError?: string;
   createdAt: string;
 }
 

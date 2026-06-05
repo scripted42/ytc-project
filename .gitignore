@@ -18,6 +18,11 @@ backend/downloads/*.mp3
 backend/downloads/*.ytdl
 backend/downloads/*.part
 
+# Thumbnails (generated assets)
+backend/thumbnails/frames/
+backend/thumbnails/*.png
+backend/thumbnails/*.jpg
+
 # Production builds
 frontend/dist/
 frontend/dist-ssr/
