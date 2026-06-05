@@ -1,0 +1,12 @@
+{
+  "ignore": [
+    "downloads/**",
+    "clips/**",
+    "data/**",
+    "bin/**",
+    "**/*.mp4",
+    "**/*.part",
+    "**/*.ytdl",
+    "db.json"
+  ]
+}
