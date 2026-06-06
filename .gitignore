@@ -9,6 +9,9 @@ backend/.env
 .env.local
 .env.*.local
 
+# Application database (contains user data & OAuth tokens - never commit!)
+backend/data/db.json
+
 # Media assets (Large video/audio files)
 backend/clips/*.mp4
 backend/downloads/*.mp4
