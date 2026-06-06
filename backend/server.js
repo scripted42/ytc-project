@@ -109,7 +109,7 @@ app.post('/api/campaigns/:id/analyze-transcript', async (req, res) => {
 
 app.post('/api/campaigns/:id/split', async (req, res) => {
   const { id } = req.params;
-  const { clipDuration, useSplitScreen } = req.body;
+  const { clipDuration, useSplitScreen, cropPosition } = req.body;
   
   const campaign = db.getCampaignById(id);
   if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
@@ -165,6 +165,7 @@ app.post('/api/campaigns/:id/split', async (req, res) => {
           startTime: start,
           duration: currentDuration,
           useSplitScreen: !!useSplitScreen,
+          cropPosition: cropPosition || 'auto',
           title,
           tags,
           status: 'pending',
@@ -269,7 +270,7 @@ async function processQueue() {
 }
 
 app.post('/api/clips/generate', async (req, res) => {
-  const { campaignId, startTime, duration, useSplitScreen, title, tags, subtitleOffset } = req.body;
+  const { campaignId, startTime, duration, useSplitScreen, title, tags, subtitleOffset, cropPosition } = req.body;
   
   const campaign = db.getCampaignById(campaignId);
   if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
@@ -284,6 +285,7 @@ app.post('/api/clips/generate', async (req, res) => {
     title: title || `${campaign.name} Clip`,
     tags: tags || '#clipping #contentrewards',
     subtitleOffset: parseFloat(subtitleOffset) || 0,
+    cropPosition: cropPosition || 'auto',
     status: 'pending',
     progress: 0
   });
@@ -360,6 +362,7 @@ async function generateClipPipeline(clipId, campaign, settings) {
       title: clipData.title,
       transcript: campaign.transcript,
       subtitleOffset: clipData.subtitleOffset || 0,
+      cropPosition: clipData.cropPosition || 'auto',
       onProgress: (pct) => {
         db.updateClip(clipId, { progress: Math.round(75 + pct * 0.25) }); // Map 0-100 FFmpeg to 75-100% total
       }
@@ -474,7 +477,7 @@ app.post('/api/clips/:id/extract-frames', async (req, res) => {
 
 // Generate the final thumbnail from a selected frame
 app.post('/api/clips/:id/generate-thumbnail', async (req, res) => {
-  const { frameIndex, titleText } = req.body;
+  const { frameIndex, titleText, textStyle } = req.body;
   const clip = db.getClipById(req.params.id);
   if (!clip) return res.status(404).json({ error: 'Clip not found' });
   if (!clip.thumbnailFrames || clip.thumbnailFrames.length === 0) {
@@ -497,7 +500,8 @@ app.post('/api/clips/:id/generate-thumbnail', async (req, res) => {
     const thumbnailPath = await renderThumbnail({
       framePath,
       titleText: titleText || clip.title || 'Untitled',
-      clipId: clip.id
+      clipId: clip.id,
+      textStyle: textStyle || 'classic'
     });
 
     const thumbnailUrl = `/thumbnails/${path.basename(thumbnailPath)}`;

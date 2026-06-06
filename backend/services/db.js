@@ -102,6 +102,7 @@ class FileDatabase {
       progress: 0,
       views: 0,
       earnings: 0,
+      cropPosition: 'auto',
       createdAt: new Date().toISOString(),
       ...clip
     };

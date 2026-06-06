@@ -63,24 +63,30 @@
   /* Title text container - positioned at top */
   .title-container {
     position: absolute;
-    top: 60px;
+    top: 150px;
     left: 40px;
     right: 40px;
     z-index: 10;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 4px;
   }
 
+  /* ==========================================
+     TEXT STYLES
+     ========================================== */
+
+  /* 1. Classic Style (Default fallback) */
+  .canvas.style-classic .title-line,
   .title-line {
     font-family: 'Anton', 'Impact', sans-serif;
-    font-size: 80px;
+    font-size: 115px;
     font-weight: 400;
     text-transform: uppercase;
-    line-height: 0.95;
+    line-height: 0.92;
     letter-spacing: 2px;
     color: #FFFFFF;
-    -webkit-text-stroke: 4px #000000;
+    -webkit-text-stroke: 5px #000000;
     paint-order: stroke fill;
     text-shadow:
       0 0 10px rgba(0, 0, 0, 0.8),
@@ -88,6 +94,7 @@
       0 0 40px rgba(0, 0, 0, 0.4);
   }
 
+  .canvas.style-classic .title-line.highlight,
   .title-line.highlight {
     color: #FFD700;
     -webkit-text-stroke: 4px #000000;
@@ -97,7 +104,7 @@
       0 4px 8px rgba(0, 0, 0, 0.6);
   }
 
-  /* Badge-style highlight behind keyword */
+  .canvas.style-classic .badge-highlight,
   .badge-highlight {
     display: inline-block;
     background: linear-gradient(135deg, #FFD700, #FFA500);
@@ -113,6 +120,90 @@
     text-shadow: none;
     box-shadow: 0 4px 15px rgba(255, 165, 0, 0.4);
     margin-bottom: 4px;
+  }
+
+  /* 2. Cyber Style (Futuristic Gamer) */
+  .canvas.style-cyber .title-line {
+    font-family: 'Montserrat', sans-serif;
+    font-size: 100px;
+    font-weight: 900;
+    text-transform: uppercase;
+    line-height: 0.92;
+    letter-spacing: 1px;
+    color: #00f3ff;
+    -webkit-text-stroke: 3px #000000;
+    paint-order: stroke fill;
+    text-shadow:
+      0 0 8px rgba(0, 243, 255, 0.8),
+      0 0 20px rgba(0, 243, 255, 0.4),
+      0 4px 8px rgba(0, 0, 0, 0.7);
+  }
+
+  .canvas.style-cyber .title-line.highlight {
+    color: #ff00ea;
+    text-shadow:
+      0 0 8px rgba(255, 0, 234, 0.8),
+      0 0 20px rgba(255, 0, 234, 0.4),
+      0 4px 8px rgba(0, 0, 0, 0.7);
+  }
+
+  .canvas.style-cyber .badge-highlight {
+    display: inline-block;
+    background: linear-gradient(135deg, #00f3ff, #ff00ea);
+    color: #FFFFFF;
+    -webkit-text-stroke: 0px;
+    padding: 4px 16px;
+    border-radius: 8px;
+    font-family: 'Montserrat', sans-serif;
+    font-size: 32px;
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    text-shadow: 0 0 8px rgba(255, 255, 255, 0.5);
+    box-shadow: 0 0 15px rgba(0, 243, 255, 0.4);
+    margin-bottom: 4px;
+  }
+
+  /* 3. Bubble Style (Comic / Anime / Manga) */
+  .canvas.style-bubble .title-container {
+    transform: skewY(-3deg) rotate(-3deg);
+  }
+
+  .canvas.style-bubble .title-line {
+    font-family: 'Anton', 'Impact', sans-serif;
+    font-size: 120px;
+    font-weight: 400;
+    text-transform: uppercase;
+    line-height: 0.92;
+    letter-spacing: 2px;
+    color: #ffe600;
+    -webkit-text-stroke: 7px #000000;
+    paint-order: stroke fill;
+    text-shadow: 7px 7px 0px #000000;
+  }
+
+  .canvas.style-bubble .title-line.highlight {
+    color: #ff3c00;
+    -webkit-text-stroke: 6px #000000;
+    text-shadow: 6px 6px 0px #000000;
+  }
+
+  .canvas.style-bubble .badge-highlight {
+    display: inline-block;
+    background: #000000;
+    color: #ffe600;
+    -webkit-text-stroke: 0px;
+    padding: 4px 16px;
+    border: 3px solid #ffe600;
+    border-radius: 8px;
+    font-family: 'Anton', sans-serif;
+    font-size: 36px;
+    font-weight: 400;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    text-shadow: none;
+    box-shadow: 6px 6px 0px #000000;
+    margin-bottom: 6px;
   }
 
   /* Bottom brand watermark */

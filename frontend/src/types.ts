@@ -32,6 +32,7 @@ export interface Clip {
   startTime: number;
   duration: number;
   useSplitScreen: boolean;
+  cropPosition?: 'auto' | 'left' | 'center' | 'right';
   gameplayType?: string;
   filePath?: string;
   title: string;

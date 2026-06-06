@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import ffprobeInstaller from '@ffprobe-installer/ffprobe';
+import { detectSpeakerFocus } from './ai.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -20,6 +21,26 @@ if (!fs.existsSync(CLIPS_DIR)) {
 }
 if (!fs.existsSync(ASSETS_DIR)) {
   fs.mkdirSync(ASSETS_DIR, { recursive: true });
+}
+
+/**
+ * Extracts a single frame at a specific timestamp.
+ * @param {string} videoPath
+ * @param {number} timestamp
+ * @param {string} outputPath
+ * @returns {Promise<void>}
+ */
+export function extractSingleFrame(videoPath, timestamp, outputPath) {
+  return new Promise((resolve, reject) => {
+    ffmpeg(videoPath)
+      .seekInput(timestamp)
+      .frames(1)
+      .outputOptions(['-q:v', '2'])
+      .output(outputPath)
+      .on('end', () => resolve())
+      .on('error', (err) => reject(err))
+      .run();
+  });
 }
 
 /**
@@ -180,6 +201,7 @@ export async function createClip({
   title,
   transcript = [],
   subtitleOffset = 0,
+  cropPosition = 'auto',
   onProgress = () => {}
 }) {
   return new Promise(async (resolve, reject) => {
@@ -203,6 +225,59 @@ export async function createClip({
       const finalDuration = Math.min(actualDuration, mainDuration - actualStart);
       if (finalDuration <= 0) {
         return reject(new Error('Start time is beyond video duration'));
+      }
+
+      // 1.5. Resolve subject focus position and calculate crop coordinates
+      let focus = cropPosition;
+      if (focus === 'auto') {
+        const middleTimestamp = actualStart + (finalDuration / 2);
+        const tempFrameName = `temp_focus_${Date.now()}_${Math.random().toString(36).substring(7)}.jpg`;
+        const tempFramePath = path.join(CLIPS_DIR, tempFrameName);
+
+        try {
+          console.log(`[Auto Reframe] Extracting focus frame from ${inputPath} at ${middleTimestamp.toFixed(2)}s...`);
+          await extractSingleFrame(inputPath, middleTimestamp, tempFramePath);
+          console.log('[Auto Reframe] Analyzing frame with Gemini Vision...');
+          focus = await detectSpeakerFocus(tempFramePath);
+        } catch (focusError) {
+          console.error('[Auto Reframe] Subject auto-detection failed, falling back to center:', focusError);
+          focus = 'center';
+        } finally {
+          // Cleanup temp frame
+          try {
+            if (fs.existsSync(tempFramePath)) fs.unlinkSync(tempFramePath);
+          } catch (e) {
+            console.error('[Auto Reframe] Failed to clean up temp frame:', e);
+          }
+        }
+      }
+
+      console.log(`[Auto Reframe] Subject focus resolved to: ${focus}`);
+
+      // Calculate dynamic crop coordinate based on resolution and focus
+      const scaleHeightTop = 640;
+      const scaleHeightFull = 1280;
+
+      // Calculate Top/Split-Screen scale & crop parameters
+      const topScaleFactor = scaleHeightTop / metadata.height;
+      const topScaledWidth = metadata.width * topScaleFactor;
+      let topCropX = Math.round((topScaledWidth - 720) / 2);
+      if (topScaledWidth > 720) {
+        if (focus === 'left') topCropX = 0;
+        else if (focus === 'right') topCropX = Math.round(topScaledWidth - 720);
+      } else {
+        topCropX = 0;
+      }
+
+      // Calculate Full-Screen scale & crop parameters
+      const fullScaleFactor = scaleHeightFull / metadata.height;
+      const fullScaledWidth = metadata.width * fullScaleFactor;
+      let fullCropX = Math.round((fullScaledWidth - 720) / 2);
+      if (fullScaledWidth > 720) {
+        if (focus === 'left') fullCropX = 0;
+        else if (focus === 'right') fullCropX = Math.round(fullScaledWidth - 720);
+      } else {
+        fullCropX = 0;
       }
 
       // Check if gameplay file exists if split screen is enabled
@@ -311,6 +386,10 @@ export async function createClip({
       // Use frame-accurate input seeking and duration limiting
       cmd.input(inputPath).inputOptions([`-ss ${actualStart}`, `-t ${finalDuration}`, '-accurate_seek']);
 
+      // Calculate fade-out transition parameters (1.0 second duration or 15% of clip if shorter)
+      const fadeDuration = Math.min(1.0, finalDuration * 0.15);
+      const fadeStart = finalDuration - fadeDuration;
+
       if (useSplitScreen) {
         // Get gameplay duration to select a random start point
         const gameplayMetadata = await getVideoMetadata(gameplayPath);
@@ -332,7 +411,7 @@ export async function createClip({
         // 3. Stack vertically (vstack)
         // 4. Align audio
         const filterGraph = [
-          `[0:v]scale=1138:640:force_original_aspect_ratio=increase,crop=720:640,setpts=PTS-STARTPTS[top]`,
+          `[0:v]scale=${Math.round(topScaledWidth)}:640:force_original_aspect_ratio=increase,crop=720:640:${topCropX}:0,setpts=PTS-STARTPTS[top]`,
           `[1:v]scale=1138:640:force_original_aspect_ratio=increase,crop=720:640,trim=start=${gpStart}:duration=${finalDuration},setpts=PTS-STARTPTS[bottom]`,
           `[top][bottom]vstack=inputs=2${vstackOut}`
         ];
@@ -342,20 +421,23 @@ export async function createClip({
           filterGraph.push(`[mergedv]${drawtextFilters.join(',')}[outv]`);
         }
 
+        // Add video fade filter
+        filterGraph.push(`[outv]fade=t=out:st=${fadeStart.toFixed(3)}:d=${fadeDuration.toFixed(3)}[fadedv]`);
+
         if (hasAudio) {
-          filterGraph.push(`[0:a]asetpts=PTS-STARTPTS[outa]`);
+          filterGraph.push(`[0:a]asetpts=PTS-STARTPTS,afade=t=out:st=${fadeStart.toFixed(3)}:d=${fadeDuration.toFixed(3)}[fadeda]`);
         }
 
         cmd
           .complexFilter(filterGraph)
-          .map('[outv]');
+          .map('[fadedv]');
 
         if (hasAudio) {
-          cmd.map('[outa]');
+          cmd.map('[fadeda]');
         }
       } else {
-        // Single video: Crop to centered 9:16 (720x1280) and apply reset timestamps
-        let videoFilter = `[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setpts=PTS-STARTPTS`;
+        // Single video: Crop to 9:16 (720x1280) with dynamic focus offset
+        let videoFilter = `[0:v]scale=${Math.round(fullScaledWidth)}:1280:force_original_aspect_ratio=increase,crop=720:1280:${fullCropX}:0,setpts=PTS-STARTPTS`;
         
         if (clipWords.length > 0) {
           const drawtextFilters = getDrawtextFilters();
@@ -365,16 +447,19 @@ export async function createClip({
         videoFilter += '[outv]';
         const filterGraph = [videoFilter];
 
+        // Add video fade filter
+        filterGraph.push(`[outv]fade=t=out:st=${fadeStart.toFixed(3)}:d=${fadeDuration.toFixed(3)}[fadedv]`);
+
         if (hasAudio) {
-          filterGraph.push(`[0:a]asetpts=PTS-STARTPTS[outa]`);
+          filterGraph.push(`[0:a]asetpts=PTS-STARTPTS,afade=t=out:st=${fadeStart.toFixed(3)}:d=${fadeDuration.toFixed(3)}[fadeda]`);
         }
 
         cmd
           .complexFilter(filterGraph)
-          .map('[outv]');
+          .map('[fadedv]');
 
         if (hasAudio) {
-          cmd.map('[outa]');
+          cmd.map('[fadeda]');
         }
       }
 

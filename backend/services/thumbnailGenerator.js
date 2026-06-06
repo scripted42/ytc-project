@@ -81,37 +81,76 @@ export async function extractCandidateFrames(videoPath, clipId, startTime = 0, c
   return framePaths;
 }
 
-/**
- * Splits a title string into display lines for the thumbnail.
- * Splits on whitespace, grouping 2-3 words per line.
- * First line gets a badge highlight style, rest are big white/yellow text.
- * @param {string} titleText
- * @returns {Array<{text: string, highlight: boolean, badge: boolean}>}
- */
 function splitTitleIntoLines(titleText) {
-  const words = titleText.trim().split(/\s+/);
-  const lines = [];
-
-  if (words.length <= 2) {
-    lines.push({ text: words.join(' '), highlight: true, badge: false });
-  } else if (words.length <= 4) {
-    // 2 lines
-    const mid = Math.ceil(words.length / 2);
-    lines.push({ text: words.slice(0, mid).join(' '), highlight: false, badge: false });
-    lines.push({ text: words.slice(mid).join(' '), highlight: true, badge: false });
-  } else {
-    // 3+ lines: first chunk gets a badge, middle is white, last is yellow
-    const chunkSize = Math.ceil(words.length / 3);
-    const line1 = words.slice(0, Math.min(3, chunkSize));
-    const line2 = words.slice(line1.length, line1.length + chunkSize);
-    const line3 = words.slice(line1.length + line2.length);
-
-    if (line1.length > 0) lines.push({ text: line1.join(' '), highlight: false, badge: true });
-    if (line2.length > 0) lines.push({ text: line2.join(' '), highlight: false, badge: false });
-    if (line3.length > 0) lines.push({ text: line3.join(' '), highlight: true, badge: false });
+  let text = titleText.trim();
+  
+  // Clean trailing punctuation
+  if (text.endsWith('.') && !text.endsWith('...')) {
+    const periods = text.match(/\./g) || [];
+    if (periods.length === 1) {
+      text = text.slice(0, -1);
+    }
   }
 
-  return lines;
+  // Split by common sentence/clause boundaries: ?, !, :, -, and keep punctuation attached
+  let initialLines = text.split(/([?!:-]+)/).map(s => s.trim()).filter(Boolean);
+  
+  const cleanLines = [];
+  for (let i = 0; i < initialLines.length; i++) {
+    const part = initialLines[i];
+    if (/^[?!:-]+$/.test(part) && cleanLines.length > 0) {
+      cleanLines[cleanLines.length - 1] += part;
+    } else {
+      cleanLines.push(part);
+    }
+  }
+
+  // Re-split excessively long lines (> 4 words) into balanced sub-lines
+  const finalLines = [];
+  cleanLines.forEach(line => {
+    const words = line.split(/\s+/);
+    if (words.length > 4) {
+      const mid = Math.ceil(words.length / 2);
+      finalLines.push(words.slice(0, mid).join(' '));
+      finalLines.push(words.slice(mid).join(' '));
+    } else if (line.length > 0) {
+      finalLines.push(line);
+    }
+  });
+
+  // Fallback to word-count division if punctuation split didn't yield multiple lines
+  if (finalLines.length <= 1) {
+    const words = text.split(/\s+/);
+    if (words.length <= 3) {
+      return [{ text: text, highlight: true, badge: false }];
+    } else if (words.length <= 5) {
+      const mid = Math.ceil(words.length / 2);
+      return [
+        { text: words.slice(0, mid).join(' '), highlight: false, badge: false },
+        { text: words.slice(mid).join(' '), highlight: true, badge: false }
+      ];
+    } else {
+      const chunkSize = Math.ceil(words.length / 3);
+      const line1 = words.slice(0, Math.min(3, chunkSize));
+      const line2 = words.slice(line1.length, line1.length + chunkSize);
+      const line3 = words.slice(line1.length + line2.length);
+
+      const res = [];
+      if (line1.length > 0) res.push({ text: line1.join(' '), highlight: false, badge: false });
+      if (line2.length > 0) res.push({ text: line2.join(' '), highlight: false, badge: false });
+      if (line3.length > 0) res.push({ text: line3.join(' '), highlight: true, badge: false });
+      return res;
+    }
+  }
+
+  // Map to formatting objects, highlighting the last line
+  return finalLines.slice(0, 4).map((lineText, idx, arr) => {
+    return {
+      text: lineText,
+      highlight: idx === arr.length - 1,
+      badge: false
+    };
+  });
 }
 
 /**
@@ -122,13 +161,14 @@ function splitTitleIntoLines(titleText) {
  * @param {string} params.clipId - Clip ID for output naming
  * @returns {Promise<string>} Path to the final rendered thumbnail
  */
-export async function renderThumbnail({ framePath, titleText, clipId }) {
+export async function renderThumbnail({ framePath, titleText, clipId, textStyle = 'classic' }) {
   const outputPath = path.join(THUMBNAILS_DIR, `thumb_${clipId}.png`);
   const templatePath = path.join(TEMPLATES_DIR, 'thumbnail.html');
 
   console.log(`[Thumbnail] Starting render for clip ${clipId}...`);
   console.log(`[Thumbnail] Frame: ${framePath}`);
   console.log(`[Thumbnail] Title: ${titleText}`);
+  console.log(`[Thumbnail] Text Style: ${textStyle}`);
 
   // Step 1: Process the frame to exactly 720x1280 (no blur, no crop/speaker separation)
   const bgProcessedPath = path.join(THUMBNAILS_DIR, `bg_processed_${clipId}.jpg`);
@@ -156,10 +196,17 @@ export async function renderThumbnail({ framePath, titleText, clipId }) {
     // Inject background image and title text
     const titleLines = splitTitleIntoLines(titleText);
 
-    await page.evaluate(({ bgBase64, titleLines }) => {
+    await page.evaluate(({ bgBase64, titleLines, textStyle }) => {
       // Set background
       const bgLayer = document.getElementById('bgLayer');
       bgLayer.style.backgroundImage = `url(data:image/jpeg;base64,${bgBase64})`;
+
+      // Apply the selected text style class to the canvas wrapper
+      const canvasEl = document.querySelector('.canvas');
+      if (canvasEl) {
+        canvasEl.classList.remove('style-classic', 'style-cyber', 'style-bubble');
+        canvasEl.classList.add(`style-${textStyle}`);
+      }
 
       // Build title lines
       const titleContainer = document.getElementById('titleContainer');
@@ -178,7 +225,23 @@ export async function renderThumbnail({ framePath, titleText, clipId }) {
           titleContainer.appendChild(div);
         }
       });
-    }, { bgBase64, titleLines });
+
+      // Auto-scale font size of title lines to prevent wrapping
+      // Thresholds tuned for 115px base (Anton font ~10.5px/char at 115px)
+      const titleLinesElements = document.querySelectorAll('.title-line');
+      titleLinesElements.forEach(line => {
+        const textLength = line.textContent.length;
+        const currentSize = parseFloat(window.getComputedStyle(line).fontSize);
+        if (textLength > 22) {
+          line.style.fontSize = (currentSize * 0.58) + 'px';  // Very long: e.g. "EVERYTHING YOU NEED TO KNOW"
+        } else if (textLength > 17) {
+          line.style.fontSize = (currentSize * 0.70) + 'px';  // Long: e.g. "THE REAL TRUTH IS"
+        } else if (textLength > 12) {
+          line.style.fontSize = (currentSize * 0.85) + 'px';  // Medium: e.g. "LIVE BETTER?"
+        }
+        // ≤12 chars: stays at full size (e.g. "LIVE LONGER")
+      });
+    }, { bgBase64, titleLines, textStyle });
 
     // Wait for fonts to load
     await page.evaluateHandle('document.fonts.ready');

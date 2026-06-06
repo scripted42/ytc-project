@@ -25,6 +25,7 @@ export default function Generator({
   const [duration, setDuration] = useState('15');
   const [useSplitScreen, setUseSplitScreen] = useState(false); // Default to false to obey CoD guidelines!
   const [subtitleOffset, setSubtitleOffset] = useState('0');
+  const [cropPosition, setCropPosition] = useState<'auto' | 'left' | 'center' | 'right'>('auto');
   const [title, setTitle] = useState('');
   const [tags, setTags] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
@@ -56,6 +57,7 @@ export default function Generator({
   const [thumbnailTitle, setThumbnailTitle] = useState<{ [clipId: string]: string }>({});
   const [renderingThumbnailClipId, setRenderingThumbnailClipId] = useState<string | null>(null);
   const [thumbnailShowSection, setThumbnailShowSection] = useState<{ [clipId: string]: boolean }>({});
+  const [thumbnailStyle, setThumbnailStyle] = useState<{ [clipId: string]: 'classic' | 'cyber' | 'bubble' }>({});
 
   const handleAnalyzeTranscript = async () => {
     if (isAnalyzing) return;
@@ -99,7 +101,8 @@ export default function Generator({
         useSplitScreen,
         title: insight.suggestedTitle,
         tags: insight.suggestedTags,
-        subtitleOffset: parseFloat(subtitleOffset) || 0
+        subtitleOffset: parseFloat(subtitleOffset) || 0,
+        cropPosition
       });
       onRefreshClips();
     } catch (err) {
@@ -196,7 +199,8 @@ export default function Generator({
         useSplitScreen,
         title,
         tags,
-        subtitleOffset: parseFloat(subtitleOffset) || 0
+        subtitleOffset: parseFloat(subtitleOffset) || 0,
+        cropPosition
       });
       setIsGenerating(false);
       onRefreshClips();
@@ -222,7 +226,8 @@ export default function Generator({
       setIsSplitting(true);
       await axios.post(`/api/campaigns/${campaign.id}/split`, {
         clipDuration: parseInt(splitDuration, 10),
-        useSplitScreen
+        useSplitScreen,
+        cropPosition
       });
       alert('Auto-splitting has started in the background! The clips will be generated sequentially. You can track progress in the list below.');
       setIsSplitting(false);
@@ -286,11 +291,13 @@ export default function Generator({
   const handleRenderThumbnail = async (clipId: string) => {
     const frameIdx = selectedFrameIndex[clipId] ?? 0;
     const titleText = thumbnailTitle[clipId] || '';
+    const textStyle = thumbnailStyle[clipId] || 'classic';
     try {
       setRenderingThumbnailClipId(clipId);
       await axios.post(`/api/clips/${clipId}/generate-thumbnail`, {
         frameIndex: frameIdx,
-        titleText
+        titleText,
+        textStyle
       });
       setThumbnailShowSection(prev => ({ ...prev, [clipId]: false }));
       setThumbnailFrames(prev => ({ ...prev, [clipId]: [] }));
@@ -304,29 +311,75 @@ export default function Generator({
   };
 
   const getLivePreviewLines = (titleText: string) => {
-    const words = titleText.trim().split(/\s+/).filter(w => w.length > 0);
-    const lines: Array<{ text: string; highlight: boolean; badge: boolean }> = [];
-
-    if (words.length === 0) return [];
-
-    if (words.length <= 2) {
-      lines.push({ text: words.join(' '), highlight: true, badge: false });
-    } else if (words.length <= 4) {
-      const mid = Math.ceil(words.length / 2);
-      lines.push({ text: words.slice(0, mid).join(' '), highlight: false, badge: false });
-      lines.push({ text: words.slice(mid).join(' '), highlight: true, badge: false });
-    } else {
-      const chunkSize = Math.ceil(words.length / 3);
-      const line1 = words.slice(0, Math.min(3, chunkSize));
-      const line2 = words.slice(line1.length, line1.length + chunkSize);
-      const line3 = words.slice(line1.length + line2.length);
-
-      if (line1.length > 0) lines.push({ text: line1.join(' '), highlight: false, badge: true });
-      if (line2.length > 0) lines.push({ text: line2.join(' '), highlight: false, badge: false });
-      if (line3.length > 0) lines.push({ text: line3.join(' '), highlight: true, badge: false });
+    let text = titleText.trim();
+    if (text.length === 0) return [];
+    
+    // Clean trailing punctuation
+    if (text.endsWith('.') && !text.endsWith('...')) {
+      const periods = text.match(/\./g) || [];
+      if (periods.length === 1) {
+        text = text.slice(0, -1);
+      }
     }
 
-    return lines;
+    // Split by common sentence/clause boundaries: ?, !, :, -, and keep punctuation attached
+    let initialLines = text.split(/([?!:-]+)/).map(s => s.trim()).filter(Boolean);
+    
+    const cleanLines: string[] = [];
+    for (let i = 0; i < initialLines.length; i++) {
+      const part = initialLines[i];
+      if (/^[?!:-]+$/.test(part) && cleanLines.length > 0) {
+        cleanLines[cleanLines.length - 1] += part;
+      } else {
+        cleanLines.push(part);
+      }
+    }
+
+    // Re-split excessively long lines (> 4 words) into balanced sub-lines
+    const finalLines: string[] = [];
+    cleanLines.forEach(line => {
+      const words = line.split(/\s+/);
+      if (words.length > 4) {
+        const mid = Math.ceil(words.length / 2);
+        finalLines.push(words.slice(0, mid).join(' '));
+        finalLines.push(words.slice(mid).join(' '));
+      } else if (line.length > 0) {
+        finalLines.push(line);
+      }
+    });
+
+    // Fallback to word-count division if punctuation split didn't yield multiple lines
+    if (finalLines.length <= 1) {
+      const words = text.split(/\s+/);
+      if (words.length <= 3) {
+        return [{ text: text, highlight: true, badge: false }];
+      } else if (words.length <= 5) {
+        const mid = Math.ceil(words.length / 2);
+        return [
+          { text: words.slice(0, mid).join(' '), highlight: false, badge: false },
+          { text: words.slice(mid).join(' '), highlight: true, badge: false }
+        ];
+      } else {
+        const chunkSize = Math.ceil(words.length / 3);
+        const line1 = words.slice(0, Math.min(3, chunkSize));
+        const line2 = words.slice(line1.length, line1.length + chunkSize);
+        const line3 = words.slice(line1.length + line2.length);
+
+        const res = [];
+        if (line1.length > 0) res.push({ text: line1.join(' '), highlight: false, badge: false });
+        if (line2.length > 0) res.push({ text: line2.join(' '), highlight: false, badge: false });
+        if (line3.length > 0) res.push({ text: line3.join(' '), highlight: true, badge: false });
+        return res;
+      }
+    }
+
+    return finalLines.slice(0, 4).map((lineText, idx, arr) => {
+      return {
+        text: lineText,
+        highlight: idx === arr.length - 1,
+        badge: false
+      };
+    });
   };
 
   const isCoDCampaign = campaign.name.toLowerCase().includes('call of duty') || campaign.name.toLowerCase().includes('cod');
@@ -533,6 +586,53 @@ export default function Generator({
               )}
             </div>
 
+            {/* Subject Framing / Smart Reframe Setting */}
+            <div
+              style={{
+                background: 'rgba(255, 255, 255, 0.02)',
+                border: '1px solid var(--border)',
+                borderRadius: 'var(--radius-md)',
+                padding: '16px'
+              }}
+            >
+              <div>
+                <h4 style={{ fontSize: '15px', fontWeight: '600', marginBottom: '4px' }}>Subject Framing (9:16 Crop Focus)</h4>
+                <p style={{ color: 'var(--text-muted)', fontSize: '12px', marginBottom: '12px' }}>
+                  Choose which area of the widescreen video to crop for the 9:16 aspect ratio.
+                </p>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  {(['auto', 'center', 'left', 'right'] as const).map((pos) => (
+                    <button
+                      key={pos}
+                      type="button"
+                      onClick={() => setCropPosition(pos)}
+                      style={{
+                        flex: 1,
+                        padding: '10px',
+                        background: cropPosition === pos ? 'rgba(99, 102, 241, 0.15)' : 'rgba(255, 255, 255, 0.02)',
+                        border: cropPosition === pos ? '1px solid var(--primary)' : '1px solid var(--border)',
+                        borderRadius: '6px',
+                        color: cropPosition === pos ? 'var(--primary)' : 'var(--text)',
+                        fontWeight: '600',
+                        fontSize: '13px',
+                        textTransform: 'capitalize',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s ease'
+                      }}
+                    >
+                      {pos === 'auto' ? '✨ Auto Focus (AI)' : pos}
+                    </button>
+                  ))}
+                </div>
+                <span style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '8px', display: 'block' }}>
+                  {cropPosition === 'auto' && "✨ AI will scan the video's center frame to auto-focus on the speaker's face."}
+                  {cropPosition === 'center' && "Crops the exact center of the frame (standard crop)."}
+                  {cropPosition === 'left' && "Focuses on the left third of the widescreen frame (e.g. host)."}
+                  {cropPosition === 'right' && "Focuses on the right third of the widescreen frame (e.g. guest)."}
+                </span>
+              </div>
+            </div>
+
             {/* Campaign warnings */}
             {isCoDCampaign && (
               <div
@@ -657,6 +757,53 @@ export default function Generator({
                     )}
                   </div>
                 )}
+              </div>
+
+              {/* Subject Framing / Smart Reframe Setting */}
+              <div
+                style={{
+                  background: 'rgba(255, 255, 255, 0.02)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius-md)',
+                  padding: '16px'
+                }}
+              >
+                <div>
+                  <h4 style={{ fontSize: '15px', fontWeight: '600', marginBottom: '4px' }}>Subject Framing (9:16 Crop Focus)</h4>
+                  <p style={{ color: 'var(--text-muted)', fontSize: '12px', marginBottom: '12px' }}>
+                    Choose which area of the widescreen video to crop for the 9:16 aspect ratio.
+                  </p>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    {(['auto', 'center', 'left', 'right'] as const).map((pos) => (
+                      <button
+                        key={pos}
+                        type="button"
+                        onClick={() => setCropPosition(pos)}
+                        style={{
+                          flex: 1,
+                          padding: '10px',
+                          background: cropPosition === pos ? 'rgba(99, 102, 241, 0.15)' : 'rgba(255, 255, 255, 0.02)',
+                          border: cropPosition === pos ? '1px solid var(--primary)' : '1px solid var(--border)',
+                          borderRadius: '6px',
+                          color: cropPosition === pos ? 'var(--primary)' : 'var(--text)',
+                          fontWeight: '600',
+                          fontSize: '13px',
+                          textTransform: 'capitalize',
+                          cursor: 'pointer',
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        {pos === 'auto' ? '✨ Auto Focus (AI)' : pos}
+                      </button>
+                    ))}
+                  </div>
+                  <span style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '8px', display: 'block' }}>
+                    {cropPosition === 'auto' && "✨ AI will scan the video's center frame to auto-focus on the speaker's face."}
+                    {cropPosition === 'center' && "Crops the exact center of the frame (standard crop)."}
+                    {cropPosition === 'left' && "Focuses on the left third of the widescreen frame (e.g. host)."}
+                    {cropPosition === 'right' && "Focuses on the right third of the widescreen frame (e.g. guest)."}
+                  </span>
+                </div>
               </div>
 
               {/* Campaign warnings */}
@@ -1261,6 +1408,39 @@ export default function Generator({
                             />
                           </div>
 
+                          {/* Style Picker */}
+                          <div style={{ marginBottom: '16px' }}>
+                            <label style={{ fontSize: '12px', fontWeight: '600', marginBottom: '8px', display: 'block', color: 'var(--text-muted)' }}>
+                              Text Style
+                            </label>
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                              {(['classic', 'cyber', 'bubble'] as const).map((style) => (
+                                <button
+                                  key={style}
+                                  type="button"
+                                  onClick={() => setThumbnailStyle(prev => ({ ...prev, [clip.id]: style }))}
+                                  style={{
+                                    flex: 1,
+                                    padding: '8px',
+                                    background: (thumbnailStyle[clip.id] || 'classic') === style ? 'rgba(99, 102, 241, 0.15)' : 'rgba(255, 255, 255, 0.02)',
+                                    border: (thumbnailStyle[clip.id] || 'classic') === style ? '1px solid var(--primary)' : '1px solid var(--border)',
+                                    borderRadius: '6px',
+                                    color: (thumbnailStyle[clip.id] || 'classic') === style ? 'var(--primary)' : 'var(--text)',
+                                    fontWeight: '600',
+                                    fontSize: '12px',
+                                    textTransform: 'capitalize',
+                                    cursor: 'pointer',
+                                    transition: 'all 0.2s ease'
+                                  }}
+                                >
+                                  {style === 'classic' && 'Classic Bold'}
+                                  {style === 'cyber' && 'Neon Cyber'}
+                                  {style === 'bubble' && 'Comic Bubble'}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
                           {/* Live Preview Box */}
                           <div style={{ marginBottom: '20px' }}>
                             <label style={{ fontSize: '12px', fontWeight: '600', marginBottom: '8px', display: 'block', color: 'var(--text-muted)' }}>
@@ -1303,46 +1483,112 @@ export default function Generator({
                                 {/* Title Container */}
                                 <div style={{
                                   position: 'absolute',
-                                  top: '15px',
+                                  top: '38px',
                                   left: '10px',
                                   right: '10px',
                                   zIndex: 3,
                                   display: 'flex',
                                   flexDirection: 'column',
-                                  gap: '2px'
+                                  gap: '2px',
+                                  transform: (thumbnailStyle[clip.id] || 'classic') === 'bubble' ? 'skewY(-3deg) rotate(-3deg)' : 'none'
                                 }}>
                                   {getLivePreviewLines(thumbnailTitle[clip.id] || '').map((line, idx) => {
+                                    const activeStyle = thumbnailStyle[clip.id] || 'classic';
                                     if (line.badge) {
-                                      return (
-                                        <div key={idx} style={{
-                                          alignSelf: 'flex-start',
+                                      let badgeStyle: React.CSSProperties = {
+                                        alignSelf: 'flex-start',
+                                        fontSize: '8px',
+                                        fontWeight: 900,
+                                        textTransform: 'uppercase',
+                                        letterSpacing: '0.5px',
+                                        padding: '2px 6px',
+                                        borderRadius: '4px',
+                                        marginBottom: '2px'
+                                      };
+                                      if (activeStyle === 'classic') {
+                                        badgeStyle = {
+                                          ...badgeStyle,
                                           background: 'linear-gradient(135deg, #FFD700, #FFA500)',
                                           color: '#000000',
-                                          padding: '2px 6px',
-                                          borderRadius: '4px',
-                                          fontFamily: "'Montserrat', sans-serif",
-                                          fontSize: '8px',
-                                          fontWeight: 900,
-                                          textTransform: 'uppercase',
-                                          letterSpacing: '0.5px',
-                                          boxShadow: '0 2px 6px rgba(255, 165, 0, 0.3)',
-                                          marginBottom: '2px'
-                                        }}>
+                                          boxShadow: '0 2px 6px rgba(255, 165, 0, 0.3)'
+                                        };
+                                      } else if (activeStyle === 'cyber') {
+                                        badgeStyle = {
+                                          ...badgeStyle,
+                                          background: 'linear-gradient(135deg, #00f3ff, #ff00ea)',
+                                          color: '#ffffff',
+                                          boxShadow: '0 2px 6px rgba(0, 243, 255, 0.3)'
+                                        };
+                                      } else if (activeStyle === 'bubble') {
+                                        badgeStyle = {
+                                          ...badgeStyle,
+                                          background: '#000000',
+                                          color: '#ffe600',
+                                          border: '1px solid #ffe600',
+                                          boxShadow: '2px 2px 0px #000000'
+                                        };
+                                      }
+                                      return (
+                                        <div key={idx} style={badgeStyle}>
                                           {line.text}
                                         </div>
                                       );
                                     } else {
-                                      return (
-                                        <div key={idx} style={{
+                                      const textLength = line.text.length;
+                                      // Base sizes proportional to backend: 115px / 100px / 120px on 720px canvas
+                                      // Preview is 180px wide (25% of 720px), so we scale by 0.25
+                                      let baseSize = 28;                        // Classic: 115 * 0.25 = ~28
+                                      if (activeStyle === 'cyber') baseSize = 24;  // Cyber:   100 * 0.25 = 25
+                                      if (activeStyle === 'bubble') baseSize = 30; // Bubble:  120 * 0.25 = 30
+                                      
+                                      let previewFontSize = baseSize;
+                                      if (textLength > 22) {
+                                        previewFontSize = Math.round(baseSize * 0.58);
+                                      } else if (textLength > 17) {
+                                        previewFontSize = Math.round(baseSize * 0.70);
+                                      } else if (textLength > 12) {
+                                        previewFontSize = Math.round(baseSize * 0.85);
+                                      }
+                                      // ≤12 chars: stays at full size
+
+                                      let lineStyle: React.CSSProperties = {
+                                        textTransform: 'uppercase',
+                                        lineHeight: 0.92,
+                                        letterSpacing: '0.5px'
+                                      };
+                                      if (activeStyle === 'classic') {
+                                        lineStyle = {
+                                          ...lineStyle,
                                           fontFamily: "'Anton', 'Impact', sans-serif",
-                                          fontSize: '18px',
-                                          textTransform: 'uppercase',
-                                          lineHeight: 0.95,
-                                          letterSpacing: '0.5px',
+                                          fontSize: `${previewFontSize}px`,
                                           color: line.highlight ? '#FFD700' : '#FFFFFF',
                                           WebkitTextStroke: '1px #000000',
                                           textShadow: '0 1px 3px rgba(0,0,0,0.8)'
-                                        }}>
+                                        };
+                                      } else if (activeStyle === 'cyber') {
+                                        lineStyle = {
+                                          ...lineStyle,
+                                          fontFamily: "'Montserrat', sans-serif",
+                                          fontWeight: 900,
+                                          fontSize: `${previewFontSize}px`,
+                                          color: line.highlight ? '#ff00ea' : '#00f3ff',
+                                          WebkitTextStroke: '0.3px #000000',
+                                          textShadow: line.highlight
+                                            ? '0 0 4px rgba(255, 0, 234, 0.8), 0 0 10px rgba(255, 0, 234, 0.4)'
+                                            : '0 0 4px rgba(0, 243, 255, 0.8), 0 0 10px rgba(0, 243, 255, 0.4)'
+                                        };
+                                      } else if (activeStyle === 'bubble') {
+                                        lineStyle = {
+                                          ...lineStyle,
+                                          fontFamily: "'Anton', 'Impact', sans-serif",
+                                          fontSize: `${previewFontSize}px`,
+                                          color: line.highlight ? '#ff3c00' : '#ffe600',
+                                          WebkitTextStroke: '1px #000000',
+                                          textShadow: '2px 2px 0px #000000'
+                                        };
+                                      }
+                                      return (
+                                        <div key={idx} style={lineStyle}>
                                           {line.text}
                                         </div>
                                       );
