@@ -7,6 +7,7 @@ export interface ViralInsight {
   duration: number;
   suggestedTitle: string;
   suggestedTags: string;
+  viralityScore?: number;
 }
 
 export interface Campaign {
@@ -33,6 +34,7 @@ export interface Clip {
   duration: number;
   useSplitScreen: boolean;
   cropPosition?: 'auto' | 'left' | 'center' | 'right';
+  focusX?: number;
   gameplayType?: string;
   filePath?: string;
   title: string;

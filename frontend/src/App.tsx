@@ -1,17 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import axios from 'axios';
 import type { Campaign, Clip, Settings } from './types';
 import Campaigns from './components/Campaigns';
 import Generator from './components/Generator';
 import Scheduler from './components/Scheduler';
 import Analytics from './components/Analytics';
-import { Award, Layers, Calendar, BarChart3, Settings as SettingsIcon } from 'lucide-react';
+import { Zap, Layers, Calendar, BarChart3, X } from 'lucide-react';
+
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'campaigns' | 'scheduler' | 'analytics'>('campaigns');
   const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null);
-  
-  // Data States
+
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [clips, setClips] = useState<Clip[]>([]);
   const [settings, setSettings] = useState<Settings>({
@@ -21,7 +21,6 @@ export default function App() {
   });
   const [isLoading, setIsLoading] = useState(true);
 
-  // Fetch initial data
   const fetchData = async () => {
     try {
       const [campaignsRes, clipsRes, settingsRes] = await Promise.all([
@@ -29,12 +28,9 @@ export default function App() {
         axios.get('/api/clips'),
         axios.get('/api/settings')
       ]);
-      
       setCampaigns(campaignsRes.data);
       setClips(clipsRes.data);
       setSettings(settingsRes.data);
-      
-      // Update selected campaign reference if it exists to refresh nested properties
       if (selectedCampaign) {
         const updated = campaignsRes.data.find((c: Campaign) => c.id === selectedCampaign.id);
         if (updated) setSelectedCampaign(updated);
@@ -48,8 +44,6 @@ export default function App() {
 
   useEffect(() => {
     fetchData();
-    
-    // Auto refresh data every 10 seconds
     const interval = setInterval(fetchData, 10000);
     return () => clearInterval(interval);
   }, [selectedCampaign]);
@@ -59,64 +53,81 @@ export default function App() {
     setActiveTab('campaigns');
   };
 
+  const navItems = [
+    { id: 'campaigns', label: 'Campaigns', icon: Layers },
+    { id: 'scheduler', label: 'Scheduler',  icon: Calendar },
+    { id: 'analytics', label: 'Analytics',  icon: BarChart3 },
+  ] as const;
+
   return (
     <div className="app-container">
-      {/* Sidebar Navigation */}
+      {/* ── Sidebar ── */}
       <aside className="sidebar">
+        {/* Logo */}
         <div className="logo-container">
-          <Award size={28} style={{ color: 'var(--primary)', strokeWidth: '2.5px' }} />
+          <div className="logo-icon">
+            <Zap size={18} color="#fff" strokeWidth={2.5} />
+          </div>
           <span className="logo-text">ClipFlow AI</span>
         </div>
-        
+
+        {/* Navigation */}
         <nav className="sidebar-menu">
-          <li
-            className={`menu-item ${activeTab === 'campaigns' ? 'active' : ''}`}
-            onClick={() => {
-              setActiveTab('campaigns');
-              setSelectedCampaign(null);
-            }}
-          >
-            <Layers size={18} />
-            <span>Campaigns</span>
-          </li>
-          <li
-            className={`menu-item ${activeTab === 'scheduler' ? 'active' : ''}`}
-            onClick={() => {
-              setActiveTab('scheduler');
-              setSelectedCampaign(null);
-            }}
-          >
-            <Calendar size={18} />
-            <span>Scheduler</span>
-          </li>
-          <li
-            className={`menu-item ${activeTab === 'analytics' ? 'active' : ''}`}
-            onClick={() => {
-              setActiveTab('analytics');
-              setSelectedCampaign(null);
-            }}
-          >
-            <BarChart3 size={18} />
-            <span>Analytics</span>
-          </li>
+          {navItems.map(({ id, label, icon: Icon }) => (
+            <li
+              key={id}
+              className={`menu-item ${activeTab === id && !selectedCampaign ? 'active' : ''}`}
+              onClick={() => { setActiveTab(id); setSelectedCampaign(null); }}
+            >
+              <Icon size={16} />
+              <span>{label}</span>
+            </li>
+          ))}
         </nav>
 
-        <div style={{ padding: '24px', borderTop: '1px solid var(--border)', fontSize: '12px', color: 'var(--text-dark)' }}>
-          System Version: 1.0.0<br />
-          Status: <span style={{ color: 'var(--secondary)' }}>Online</span>
+        {/* Active Campaign Strip */}
+        {selectedCampaign && (
+          <div
+            className="sidebar-campaign-strip"
+            onClick={() => setSelectedCampaign(selectedCampaign)}
+            title="Currently editing this campaign"
+          >
+            <div className="sidebar-campaign-label">▶ Active Campaign</div>
+            <div className="sidebar-campaign-name">{selectedCampaign.name}</div>
+            <div style={{ fontSize: '11px', color: 'var(--primary-light)', marginTop: '4px', opacity: 0.7 }}>
+              ${selectedCampaign.rate.toFixed(2)}/1K views
+            </div>
+            <button
+              onClick={(e) => { e.stopPropagation(); setSelectedCampaign(null); setActiveTab('campaigns'); }}
+              style={{
+                position: 'absolute', top: 8, right: 8,
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: 'var(--text-dark)', padding: '2px',
+                display: 'flex', alignItems: 'center'
+              }}
+              title="Close campaign"
+            >
+              <X size={12} />
+            </button>
+          </div>
+        )}
+
+        {/* Footer */}
+        <div className="sidebar-footer">
+          <span>v1.0.0</span>
+          <span><span className="status-dot" />Online</span>
         </div>
       </aside>
 
-      {/* Main Panel */}
+      {/* ── Main ── */}
       <main className="main-content">
         {isLoading ? (
-          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '60vh', flexDirection: 'column', gap: '16px' }}>
-            <div style={{ width: '40px', height: '40px', border: '3px solid var(--border)', borderTopColor: 'var(--primary)', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
-            <p style={{ color: 'var(--text-muted)' }}>Connecting to ClipFlow server...</p>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '60vh', gap: '16px' }}>
+            <div className="processing-ring" style={{ width: '44px', height: '44px' }} />
+            <p style={{ color: 'var(--text-muted)', fontSize: '14px' }}>Connecting to ClipFlow server…</p>
           </div>
         ) : (
           <>
-            {/* Campaigns / Generator tab */}
             {activeTab === 'campaigns' && (
               selectedCampaign ? (
                 <Generator
@@ -135,28 +146,16 @@ export default function App() {
                 />
               )
             )}
-
-            {/* Scheduler tab */}
-            {activeTab === 'scheduler' && (
-              <Scheduler clips={clips} onRefresh={fetchData} />
-            )}
-
-            {/* Analytics tab */}
-            {activeTab === 'analytics' && (
-              <Analytics clips={clips} campaigns={campaigns} />
-            )}
+            {activeTab === 'scheduler' && <Scheduler clips={clips} onRefresh={fetchData} />}
+            {activeTab === 'analytics' && <Analytics clips={clips} />}
           </>
         )}
       </main>
-      
-      {/* Keyframe animation for spinner (since Tailwind isn't imported) */}
+
+      {/* Global keyframes */}
       <style>{`
-        @keyframes spin {
-          to { transform: rotate(360deg); }
-        }
-        .animate-spin {
-          animation: spin 1.5s linear infinite;
-        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .animate-spin { animation: spin 1s linear infinite; }
       `}</style>
     </div>
   );

@@ -1,13 +1,11 @@
-import React from 'react';
-import type { Clip, Campaign } from '../types';
-import { DollarSign, Eye, Film, TrendingUp, Award, Calendar } from 'lucide-react';
+import type { Clip } from '../types';
+import { DollarSign, Eye, Film } from 'lucide-react';
 
 interface AnalyticsProps {
   clips: Clip[];
-  campaigns: Campaign[];
 }
 
-export default function Analytics({ clips, campaigns }: AnalyticsProps) {
+export default function Analytics({ clips }: AnalyticsProps) {
   // Aggregate stats
   const totalClips = clips.length;
   const completedClips = clips.filter(c => c.status === 'completed');

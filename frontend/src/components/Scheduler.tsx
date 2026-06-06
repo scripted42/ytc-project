@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import type { Clip } from '../types';
-import { Share2, Clock, CheckCircle, ExternalLink, AlertTriangle, Copy, Check, Youtube, Loader2, Link2, AlertCircle } from 'lucide-react';
+import { Clock, CheckCircle, ExternalLink, AlertTriangle, Copy, Check, Youtube, Loader2, AlertCircle } from 'lucide-react';
 import axios from 'axios';
 
 interface SchedulerProps {
@@ -20,7 +20,7 @@ export default function Scheduler({ clips, onRefresh }: SchedulerProps) {
     
     // Check if any clip is currently uploading
     const hasUploadingClip = clips.some(c => c.youtubeUploadStatus === 'uploading');
-    let interval: NodeJS.Timeout;
+    let interval: any;
     
     if (hasUploadingClip) {
       interval = setInterval(() => {
@@ -82,6 +82,16 @@ export default function Scheduler({ clips, onRefresh }: SchedulerProps) {
 
   const completedClips = clips.filter(c => c.status === 'completed');
 
+  // Group completed clips by campaign name
+  const clipsByCampaign = completedClips.reduce((acc, clip) => {
+    const name = clip.campaignName || 'General / Other Campaign';
+    if (!acc[name]) {
+      acc[name] = [];
+    }
+    acc[name].push(clip);
+    return acc;
+  }, {} as Record<string, Clip[]>);
+
   return (
     <div className="animated-fade-in">
       <div style={{ marginBottom: '32px' }}>
@@ -127,120 +137,169 @@ export default function Scheduler({ clips, onRefresh }: SchedulerProps) {
               <p style={{ color: 'var(--text-muted)' }}>No completed clips ready. Generate some clips first!</p>
             </div>
           ) : (
-            completedClips.map(clip => (
-              <div key={clip.id} className="glass-card">
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px' }}>
-                  <div style={{ flex: 1, minWidth: '250px' }}>
-                    <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
-                      <span className="badge badge-secondary" style={{ fontSize: '10px' }}>
-                        {clip.campaignName}
-                      </span>
-                      {clip.thumbnailPath && (
-                        <span className="badge badge-secondary" style={{ fontSize: '10px', background: 'rgba(99, 102, 241, 0.1)', color: 'var(--primary)', borderColor: 'rgba(99, 102, 241, 0.2)' }}>
-                          Thumbnail Ready
-                        </span>
-                      )}
-                    </div>
-                    
-                    <h4 style={{ fontSize: '16px', fontWeight: '700', fontFamily: 'var(--font-display)', marginBottom: '6px' }}>
-                      {clip.name}
-                    </h4>
-                    <p style={{ color: 'var(--text-muted)', fontSize: '12px', marginBottom: '12px' }}>
-                      Rendered: {new Date(clip.createdAt).toLocaleDateString()} at {new Date(clip.createdAt).toLocaleTimeString()}
-                    </p>
+            Object.entries(clipsByCampaign).map(([campaignName, campaignClips]) => (
+              <div key={campaignName} style={{ marginBottom: '32px' }}>
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '10px',
+                  borderBottom: '1px solid var(--border)',
+                  paddingBottom: '8px',
+                  marginBottom: '16px',
+                  marginTop: '12px'
+                }}>
+                  <div style={{
+                    width: '6px',
+                    height: '18px',
+                    background: 'var(--primary)',
+                    borderRadius: '2px'
+                  }} />
+                  <h4 style={{
+                    fontFamily: 'var(--font-display)',
+                    fontSize: '16px',
+                    fontWeight: '700',
+                    color: '#fff',
+                    margin: 0
+                  }}>
+                    {campaignName}
+                  </h4>
+                  <span className="badge badge-secondary" style={{ fontSize: '11px', padding: '2px 8px' }}>
+                    {campaignClips.length} {campaignClips.length === 1 ? 'clip' : 'clips'}
+                  </span>
+                </div>
 
-                    <div style={{ background: 'rgba(0,0,0,0.15)', padding: '12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', marginBottom: '12px' }}>
-                      <p style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: '600', marginBottom: '4px' }}>
-                        Title: {clip.title}
-                      </p>
-                      <p style={{ fontSize: '12px', color: 'var(--text-muted)', whiteSpace: 'pre-line' }}>
-                        {clip.tags}
-                      </p>
-                    </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  {campaignClips.map(clip => (
+                    <div key={clip.id} className="glass-card">
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px' }}>
+                        <div style={{ flex: 1, minWidth: '250px' }}>
+                          <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                            {clip.thumbnailPath && (
+                              <span className="badge badge-secondary" style={{ fontSize: '10px', background: 'rgba(99, 102, 241, 0.1)', color: 'var(--primary)', borderColor: 'rgba(99, 102, 241, 0.2)' }}>
+                                Thumbnail Ready
+                              </span>
+                            )}
+                          </div>
+                          
+                          <h4 style={{ fontSize: '16px', fontWeight: '700', fontFamily: 'var(--font-display)', marginBottom: '6px' }}>
+                            {clip.name}
+                          </h4>
+                          <p style={{ color: 'var(--text-muted)', fontSize: '12px', marginBottom: '12px' }}>
+                            Rendered: {new Date(clip.createdAt).toLocaleDateString()} at {new Date(clip.createdAt).toLocaleTimeString()}
+                          </p>
 
-                    {/* YouTube upload specific errors */}
-                    {clip.youtubeUploadStatus === 'failed' && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#ef4444', fontSize: '12px', marginTop: '8px' }}>
-                        <AlertCircle size={14} />
-                        <span>Upload failed: {clip.youtubeUploadError || 'Unknown API error'}</span>
-                      </div>
-                    )}
-                  </div>
+                          <div style={{ background: 'rgba(0,0,0,0.15)', padding: '12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', marginBottom: '12px' }}>
+                            <p style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: '600', marginBottom: '4px' }}>
+                              Title: {clip.title}
+                            </p>
+                            <p style={{ fontSize: '12px', color: 'var(--text-muted)', whiteSpace: 'pre-line' }}>
+                              {clip.tags}
+                            </p>
+                          </div>
 
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', alignSelf: 'stretch', justifyContent: 'space-between', minWidth: '180px' }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                      <button
-                        className="btn btn-secondary"
-                        style={{ fontSize: '12px', padding: '8px 12px', width: '100%' }}
-                        onClick={() => handleCopyCaption(clip)}
-                      >
-                        {copiedClipId === clip.id ? (
-                          <><Check size={14} style={{ color: 'var(--secondary)' }} /> Copied!</>
-                        ) : (
-                          <><Copy size={14} /> Copy Caption</>
-                        )}
-                      </button>
-                      
-                      <a
-                        href={`/clips/${clip.fileName}`}
-                        download
-                        className="btn btn-secondary"
-                        style={{ fontSize: '12px', padding: '8px 12px', textDecoration: 'none', textAlign: 'center', display: 'block', width: '100%' }}
-                      >
-                        Download File
-                      </a>
-                    </div>
-
-                    {/* YouTube Publisher Actions */}
-                    <div style={{ borderTop: '1px solid var(--border)', paddingTop: '10px', marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                      {clip.youtubeUploadStatus === 'success' ? (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                          <span className="badge badge-secondary" style={{ fontSize: '11px', background: 'rgba(16, 185, 129, 0.1)', color: '#10b981', borderColor: 'rgba(16, 185, 129, 0.2)', width: '100%', justifyContent: 'center' }}>
-                            <CheckCircle size={12} /> Uploaded to YouTube
-                          </span>
-                          <a
-                            href={`https://studio.youtube.com/video/${clip.youtubeVideoId}/edit`}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="btn btn-primary"
-                            style={{ fontSize: '11px', padding: '6px 10px', textDecoration: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
-                          >
-                            <ExternalLink size={12} /> Edit in Studio
-                          </a>
+                          {/* YouTube upload specific errors */}
+                          {clip.youtubeUploadStatus === 'failed' && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#ef4444', fontSize: '12px', marginTop: '8px' }}>
+                              <AlertCircle size={14} />
+                              <span>Upload failed: {clip.youtubeUploadError || 'Unknown API error'}</span>
+                            </div>
+                          )}
                         </div>
-                      ) : clip.youtubeUploadStatus === 'uploading' ? (
-                        <button className="btn btn-primary" disabled style={{ fontSize: '12px', padding: '8px 12px', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
-                          <Loader2 size={14} className="animate-spin" /> Uploading Draft...
-                        </button>
-                      ) : (
-                        <button
-                          className="btn btn-primary"
-                          disabled={!isYoutubeConnected || uploadingClipId === clip.id}
-                          onClick={() => handleUploadToYoutube(clip.id)}
-                          style={{
-                            fontSize: '12px',
-                            padding: '8px 12px',
-                            width: '100%',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: '6px',
-                            opacity: isYoutubeConnected ? 1 : 0.5,
-                            cursor: isYoutubeConnected ? 'pointer' : 'not-allowed'
-                          }}
-                        >
-                          <Youtube size={14} /> 
-                          {clip.youtubeUploadStatus === 'failed' ? 'Retry YT Upload' : 'Upload YT Draft'}
-                        </button>
-                      )}
-                      
-                      {!isYoutubeConnected && clip.youtubeUploadStatus !== 'success' && (
-                        <p style={{ fontSize: '10px', color: 'var(--text-muted)', textAlign: 'center', margin: 0 }}>
-                          Connect channel to enable upload
-                        </p>
-                      )}
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', alignSelf: 'stretch', justifyContent: 'space-between', minWidth: '180px' }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            <button
+                              className="btn btn-secondary"
+                              style={{ fontSize: '12px', padding: '8px 12px', width: '100%' }}
+                              onClick={() => handleCopyCaption(clip)}
+                            >
+                              {copiedClipId === clip.id ? (
+                                <><Check size={14} style={{ color: 'var(--secondary)' }} /> Copied!</>
+                              ) : (
+                                <><Copy size={14} /> Copy Caption</>
+                              )}
+                            </button>
+                            
+                            <a
+                              href={`/clips/${clip.fileName}`}
+                              download
+                              className="btn btn-secondary"
+                              style={{ fontSize: '12px', padding: '8px 12px', textDecoration: 'none', textAlign: 'center', display: 'block', width: '100%' }}
+                            >
+                              Download File
+                            </a>
+                          </div>
+
+                          {/* YouTube Publisher Actions */}
+                          <div style={{ borderTop: '1px solid var(--border)', paddingTop: '10px', marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            {clip.youtubeUploadStatus === 'success' ? (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                <span className="badge badge-secondary" style={{ fontSize: '11px', background: 'rgba(16, 185, 129, 0.1)', color: '#10b981', borderColor: 'rgba(16, 185, 129, 0.2)', width: '100%', justifyContent: 'center' }}>
+                                  <CheckCircle size={12} /> Uploaded to YouTube
+                                </span>
+                                <a
+                                  href={`https://studio.youtube.com/video/${clip.youtubeVideoId}/edit`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="btn btn-primary"
+                                  style={{ fontSize: '11px', padding: '6px 10px', textDecoration: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
+                                >
+                                  <ExternalLink size={12} /> Edit in Studio
+                                </a>
+                                <button
+                                  className="btn btn-secondary"
+                                  disabled={!isYoutubeConnected || uploadingClipId === clip.id}
+                                  onClick={() => handleUploadToYoutube(clip.id)}
+                                  style={{
+                                    fontSize: '11px',
+                                    padding: '6px 10px',
+                                    width: '100%',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    gap: '4px',
+                                    cursor: isYoutubeConnected ? 'pointer' : 'not-allowed'
+                                  }}
+                                >
+                                  <Youtube size={12} /> Reupload to YouTube
+                                </button>
+                              </div>
+                            ) : clip.youtubeUploadStatus === 'uploading' ? (
+                              <button className="btn btn-primary" disabled style={{ fontSize: '12px', padding: '8px 12px', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                                <Loader2 size={14} className="animate-spin" /> Uploading Draft...
+                              </button>
+                            ) : (
+                              <button
+                                className="btn btn-primary"
+                                disabled={!isYoutubeConnected || uploadingClipId === clip.id}
+                                onClick={() => handleUploadToYoutube(clip.id)}
+                                style={{
+                                  fontSize: '12px',
+                                  padding: '8px 12px',
+                                  width: '100%',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  gap: '6px',
+                                  opacity: isYoutubeConnected ? 1 : 0.5,
+                                  cursor: isYoutubeConnected ? 'pointer' : 'not-allowed'
+                                }}
+                              >
+                                <Youtube size={14} /> 
+                                {clip.youtubeUploadStatus === 'failed' ? 'Retry YT Upload' : 'Upload YT Draft'}
+                              </button>
+                            )}
+                            
+                            {!isYoutubeConnected && clip.youtubeUploadStatus !== 'success' && (
+                              <p style={{ fontSize: '10px', color: 'var(--text-muted)', textAlign: 'center', margin: 0 }}>
+                                Connect channel to enable upload
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
                     </div>
-                  </div>
+                  ))}
                 </div>
               </div>
             ))

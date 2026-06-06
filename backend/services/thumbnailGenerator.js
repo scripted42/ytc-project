@@ -161,7 +161,7 @@ function splitTitleIntoLines(titleText) {
  * @param {string} params.clipId - Clip ID for output naming
  * @returns {Promise<string>} Path to the final rendered thumbnail
  */
-export async function renderThumbnail({ framePath, titleText, clipId, textStyle = 'classic' }) {
+export async function renderThumbnail({ framePath, titleText, clipId, textStyle = 'classic', focusX = 0.5 }) {
   const outputPath = path.join(THUMBNAILS_DIR, `thumb_${clipId}.png`);
   const templatePath = path.join(TEMPLATES_DIR, 'thumbnail.html');
 
@@ -169,12 +169,33 @@ export async function renderThumbnail({ framePath, titleText, clipId, textStyle 
   console.log(`[Thumbnail] Frame: ${framePath}`);
   console.log(`[Thumbnail] Title: ${titleText}`);
   console.log(`[Thumbnail] Text Style: ${textStyle}`);
+  console.log(`[Thumbnail] Focus X: ${focusX}`);
 
-  // Step 1: Process the frame to exactly 720x1280 (no blur, no crop/speaker separation)
+  // Step 1: Process the frame to exactly 720x1280, centering on focusX
   const bgProcessedPath = path.join(THUMBNAILS_DIR, `bg_processed_${clipId}.jpg`);
-  await sharp(framePath)
-    .resize(720, 1280, { fit: 'cover', position: 'center' })
-    .toFile(bgProcessedPath);
+  
+  try {
+    const meta = await sharp(framePath).metadata();
+    const scaleFactor = 1280 / (meta.height || 1080);
+    const scaledWidth = Math.round((meta.width || 1920) * scaleFactor);
+    
+    const subjectPixelX = focusX * scaledWidth;
+    let cropX = Math.round(subjectPixelX - 360);
+    // Clamp cropX to bounds
+    cropX = Math.max(0, Math.min(scaledWidth - 720, cropX));
+
+    console.log(`[Thumbnail] Resizing frame to ${scaledWidth}x1280 and cropping at X=${cropX}`);
+    
+    await sharp(framePath)
+      .resize(scaledWidth, 1280)
+      .extract({ left: cropX, top: 0, width: 720, height: 1280 })
+      .toFile(bgProcessedPath);
+  } catch (sharpErr) {
+    console.error('[Thumbnail] Sharp processing failed, falling back to center cover:', sharpErr);
+    await sharp(framePath)
+      .resize(720, 1280, { fit: 'cover', position: 'center' })
+      .toFile(bgProcessedPath);
+  }
 
   // Step 2: Launch Puppeteer to render the text overlay
   const browser = await puppeteer.launch({

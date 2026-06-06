@@ -10,7 +10,7 @@ import db from './services/db.js';
 import { downloadVideo, ensureYtDlp } from './services/downloader.js';
 import { createClip, getVideoMetadata } from './services/videoProcessor.js';
 import { getTranscript } from './services/transcript.js';
-import { analyzeTranscript } from './services/ai.js';
+import { analyzeTranscript, generateClickbaitThumbnailTitle } from './services/ai.js';
 import { extractCandidateFrames, renderThumbnail, cleanupFrames } from './services/thumbnailGenerator.js';
 import { getAuthUrl, getTokensFromCode, uploadVideoToYoutube } from './services/youtubePublisher.js';
 
@@ -344,6 +344,19 @@ async function generateClipPipeline(clipId, campaign, settings) {
     }
   }
 
+  // 2.5. Ensure transcript is fetched for subtitle generation
+  if (!campaign.transcript) {
+    try {
+      console.log(`[Pipeline] Transcript not found on campaign. Attempting auto-fetch for subtitles...`);
+      const transcript = await getTranscript(campaign.sourceUrl);
+      db.updateCampaign(campaign.id, { transcript });
+      campaign.transcript = transcript;
+      console.log(`[Pipeline] Transcript successfully auto-fetched.`);
+    } catch (err) {
+      console.warn(`[Pipeline] Failed to auto-fetch transcript for subtitles:`, err.message);
+    }
+  }
+
   // 3. Process Video (Cut, Crop, Stack)
   try {
     db.updateClip(clipId, { status: 'processing', progress: 75 });
@@ -352,7 +365,7 @@ async function generateClipPipeline(clipId, campaign, settings) {
     const finalOutputPath = path.join(CLIPS_DIR, outputFilename);
     const clipData = db.getClipById(clipId);
     
-    await createClip({
+    const { focusX } = await createClip({
       inputPath: mainVideoLocalPath,
       gameplayPath: gameplayLocalPath,
       startTime: clipData.startTime,
@@ -373,7 +386,8 @@ async function generateClipPipeline(clipId, campaign, settings) {
       status: 'completed',
       progress: 100,
       filePath: finalOutputPath,
-      fileName: outputFilename
+      fileName: outputFilename,
+      focusX: focusX
     });
     console.log(`Successfully completed generation of clip ${clipId}`);
 
@@ -475,6 +489,22 @@ app.post('/api/clips/:id/extract-frames', async (req, res) => {
   }
 });
 
+// Generate short clickbait title for thumbnail from original clip title
+app.post('/api/clips/:id/generate-clickbait-title', async (req, res) => {
+  const clip = db.getClipById(req.params.id);
+  if (!clip) return res.status(404).json({ error: 'Clip not found' });
+
+  try {
+    const originalTitle = clip.title || clip.name;
+    console.log(`[Thumbnail] Generating clickbait title for clip ${clip.id} from original: "${originalTitle}"`);
+    const clickbaitTitle = await generateClickbaitThumbnailTitle(originalTitle);
+    res.json({ clickbaitTitle });
+  } catch (err) {
+    console.error('[Thumbnail] Clickbait title generation error:', err);
+    res.status(500).json({ error: `Failed to generate title: ${err.message}` });
+  }
+});
+
 // Generate the final thumbnail from a selected frame
 app.post('/api/clips/:id/generate-thumbnail', async (req, res) => {
   const { frameIndex, titleText, textStyle } = req.body;
@@ -501,7 +531,8 @@ app.post('/api/clips/:id/generate-thumbnail', async (req, res) => {
       framePath,
       titleText: titleText || clip.title || 'Untitled',
       clipId: clip.id,
-      textStyle: textStyle || 'classic'
+      textStyle: textStyle || 'classic',
+      focusX: clip.focusX !== undefined ? clip.focusX : 0.5
     });
 
     const thumbnailUrl = `/thumbnails/${path.basename(thumbnailPath)}`;

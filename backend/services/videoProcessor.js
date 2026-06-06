@@ -227,9 +227,16 @@ export async function createClip({
         return reject(new Error('Start time is beyond video duration'));
       }
 
-      // 1.5. Resolve subject focus position and calculate crop coordinates
-      let focus = cropPosition;
-      if (focus === 'auto') {
+      // 1.5. Resolve subject focus position (0.0 to 1.0) and calculate crop coordinates
+      let focusX = 0.5; // default to center
+      if (cropPosition === 'left') {
+        focusX = 0.15;
+      } else if (cropPosition === 'right') {
+        focusX = 0.85;
+      } else if (cropPosition === 'center') {
+        focusX = 0.5;
+      } else {
+        // cropPosition is 'auto'
         const middleTimestamp = actualStart + (finalDuration / 2);
         const tempFrameName = `temp_focus_${Date.now()}_${Math.random().toString(36).substring(7)}.jpg`;
         const tempFramePath = path.join(CLIPS_DIR, tempFrameName);
@@ -237,11 +244,11 @@ export async function createClip({
         try {
           console.log(`[Auto Reframe] Extracting focus frame from ${inputPath} at ${middleTimestamp.toFixed(2)}s...`);
           await extractSingleFrame(inputPath, middleTimestamp, tempFramePath);
-          console.log('[Auto Reframe] Analyzing frame with Gemini Vision...');
-          focus = await detectSpeakerFocus(tempFramePath);
+          console.log('[Auto Reframe] Scanning speaker/face coordinates with Gemini Vision...');
+          focusX = await detectSpeakerFocus(tempFramePath);
         } catch (focusError) {
-          console.error('[Auto Reframe] Subject auto-detection failed, falling back to center:', focusError);
-          focus = 'center';
+          console.error('[Auto Reframe] Subject auto-detection failed, falling back to 0.5:', focusError);
+          focusX = 0.5;
         } finally {
           // Cleanup temp frame
           try {
@@ -252,7 +259,7 @@ export async function createClip({
         }
       }
 
-      console.log(`[Auto Reframe] Subject focus resolved to: ${focus}`);
+      console.log(`[Auto Reframe] Subject focus X coordinate resolved to: ${focusX} (${(focusX * 100).toFixed(1)}%)`);
 
       // Calculate dynamic crop coordinate based on resolution and focus
       const scaleHeightTop = 640;
@@ -261,23 +268,23 @@ export async function createClip({
       // Calculate Top/Split-Screen scale & crop parameters
       const topScaleFactor = scaleHeightTop / metadata.height;
       const topScaledWidth = metadata.width * topScaleFactor;
-      let topCropX = Math.round((topScaledWidth - 720) / 2);
+      let topCropX = 0;
       if (topScaledWidth > 720) {
-        if (focus === 'left') topCropX = 0;
-        else if (focus === 'right') topCropX = Math.round(topScaledWidth - 720);
-      } else {
-        topCropX = 0;
+        const subjectPixelX = focusX * topScaledWidth;
+        topCropX = Math.round(subjectPixelX - 360);
+        // Clamp topCropX between 0 and topScaledWidth - 720
+        topCropX = Math.max(0, Math.min(topScaledWidth - 720, topCropX));
       }
 
       // Calculate Full-Screen scale & crop parameters
       const fullScaleFactor = scaleHeightFull / metadata.height;
       const fullScaledWidth = metadata.width * fullScaleFactor;
-      let fullCropX = Math.round((fullScaledWidth - 720) / 2);
+      let fullCropX = 0;
       if (fullScaledWidth > 720) {
-        if (focus === 'left') fullCropX = 0;
-        else if (focus === 'right') fullCropX = Math.round(fullScaledWidth - 720);
-      } else {
-        fullCropX = 0;
+        const subjectPixelX = focusX * fullScaledWidth;
+        fullCropX = Math.round(subjectPixelX - 360);
+        // Clamp fullCropX between 0 and fullScaledWidth - 720
+        fullCropX = Math.max(0, Math.min(fullScaledWidth - 720, fullCropX));
       }
 
       // Check if gameplay file exists if split screen is enabled
@@ -493,7 +500,7 @@ export async function createClip({
         })
         .on('end', () => {
           onProgress(100);
-          resolve(outputPath);
+          resolve({ outputPath, focusX });
         })
         .on('error', (err) => {
           console.error('FFmpeg processing error:', err);
